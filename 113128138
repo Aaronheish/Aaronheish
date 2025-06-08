@@ -1,0 +1,118 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "I2Cdev.h"
+#include "MPU6050.h"
+
+#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+  #include "Wire.h"
+#endif
+
+// 🛜 WiFi 與 Discord Webhook 設定
+const char* ssid = "XN";
+const char* password = "00000000";
+const char* webhook_url = "https://discordapp.com/api/webhooks/1376910788945645588/RYCDv1RgTmrCxnkHUE9FU8jmcJIvdcXZ9mEMqYgpmdNM3YiEIZUfvi3vy2IEzx1PriLj";
+
+MPU6050 accelgyro;
+int16_t ax, ay, az;
+int16_t gx, gy, gz;
+
+#define BUZZER_PIN 15
+
+bool hasWarned = false;
+bool isBeeping = false;
+unsigned long previousBeepMillis = 0;
+const int beepOnTime = 200;   // 嗶多久(ms)
+const int beepOffTime = 300;  // 間隔多久(ms)
+
+void sendDiscordAlert(const String& content) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(webhook_url);
+    http.addHeader("Content-Type", "application/json");
+
+    String payload = "{\"content\":\"" + content + "\"}";
+    int httpResponseCode = http.POST(payload);
+
+    if (httpResponseCode > 0) {
+      Serial.print("✅ Discord 已通知，回應碼：");
+      Serial.println(httpResponseCode);
+    } else {
+      Serial.print("❌ Discord 通知失敗，錯誤碼：");
+      Serial.println(httpResponseCode);
+    }
+    http.end();
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // 初始化 WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("正在連接 WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\n✅ WiFi 已連線！");
+
+  // 初始化 MPU6050
+  Wire.begin();
+  accelgyro.initialize();
+
+  if (accelgyro.testConnection()) {
+    Serial.println("✅ MPU6050 連線成功！");
+  } else {
+    Serial.println("❌ MPU6050 連線失敗！");
+  }
+
+  // 初始化蜂鳴器
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void loop() {
+  // 讀取六軸資料
+  accelgyro.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+
+  float angleX = atan2(ay, az) * 180.0 / PI;
+  float angleY = atan2(ax, az) * 180.0 / PI;
+
+  Serial.print("angleX: "); Serial.print(angleX);
+  Serial.print("°, angleY: "); Serial.print(angleY);
+  Serial.print("°, az: "); Serial.println(az);
+
+  // 偵測跌倒（姿態或加速度異常）
+  if (!hasWarned && ( (abs(angleX) > 45 || abs(angleY) > 45) && (az < 8000 || az > 24000) )){
+    Serial.println("⚠️ 跌倒偵測中...");
+    sendDiscordAlert("🚨 ESP32 跌倒偵測警告：姿態或加速度異常！");
+    hasWarned = true;
+    previousBeepMillis = millis();
+    isBeeping = true;
+  }
+
+  // 狀態恢復正常
+  if (hasWarned && abs(angleX) < 30 && abs(angleY) < 30 && az >= 12000 && az <= 20000) {
+    Serial.println("✅ 姿態恢復正常");
+    sendDiscordAlert("☠️☠️自己嚇自己~~");
+    hasWarned = false;
+    isBeeping = false;
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+
+  // 處理蜂鳴器節奏
+  if (hasWarned) {
+    unsigned long currentMillis = millis();
+    if (isBeeping && currentMillis - previousBeepMillis >= beepOnTime) {
+      digitalWrite(BUZZER_PIN, LOW);
+      isBeeping = false;
+      previousBeepMillis = currentMillis;
+    } else if (!isBeeping && currentMillis - previousBeepMillis >= beepOffTime) {
+      digitalWrite(BUZZER_PIN, HIGH);
+      isBeeping = true;
+      previousBeepMillis = currentMillis;
+    }
+  }
+
+  delay(100);
+}

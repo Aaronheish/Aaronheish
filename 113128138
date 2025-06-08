@@ -116,3 +116,41 @@ void loop() {
 
   delay(100);
 }
+pip install flask openai requests
+from flask import Flask, request, jsonify
+import openai
+import requests
+
+app = Flask(__name__)
+
+openai.api_key = "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"
+DISCORD_WEBHOOK = "https://discordapp.com/api/webhooks/1376910788945645588/RYCDv1RgTmrCxnkHUE9FU8jmcJIvdcXZ9mEMqYgpmdNM3YiEIZUfvi3vy2IEzx1PriLj"
+
+@app.route("/fall", methods=["POST"])
+def handle_fall():
+    data = request.json
+    angleX = data.get("angleX")
+    angleY = data.get("angleY")
+    az = data.get("az")
+
+    prompt = f"""
+你是一個智慧照護機器人，請幫我根據以下跌倒資訊，生成一段自然語言通知訊息，語氣簡明易懂：
+角度X: {angleX} 度
+角度Y: {angleY} 度
+加速度Z: {az}
+請用繁體中文生成通知內容。
+"""
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    message = response["choices"][0]["message"]["content"]
+
+    # 傳送 GPT 訊息到 Discord
+    requests.post(DISCORD_WEBHOOK, json={"content": message})
+    return jsonify({"status": "ok", "message": message})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
